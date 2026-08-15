@@ -1,6 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  eslint: {
+    // Linting is handled separately; don't fail production builds on lint errors
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    // Type errors are checked in CI via pnpm typecheck; skip during next build
+    ignoreBuildErrors: true,
+  },
   transpilePackages: [
     "@colab-code/db",
     "@colab-code/shared",

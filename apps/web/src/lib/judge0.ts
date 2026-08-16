@@ -86,7 +86,8 @@ function statusLabel(id: number): string {
 
 async function submitWithRapidAPI(
   sourceCode: string,
-  languageId: number
+  languageId: number,
+  stdin?: string
 ): Promise<ExecutionResult> {
   // Submit
   const submitRes = await fetch(`${JUDGE0_BASE}/submissions?base64_encoded=false&wait=false`, {
@@ -96,7 +97,7 @@ async function submitWithRapidAPI(
       "X-RapidAPI-Key": RAPIDAPI_KEY,
       "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
     },
-    body: JSON.stringify({ source_code: sourceCode, language_id: languageId }),
+    body: JSON.stringify({ source_code: sourceCode, language_id: languageId, stdin: stdin ?? "" }),
   });
 
   if (!submitRes.ok) throw new Error(`Submission failed: ${submitRes.status}`);
@@ -123,14 +124,15 @@ async function submitWithRapidAPI(
 
 async function submitWithPublicCE(
   sourceCode: string,
-  languageId: number
+  languageId: number,
+  stdin?: string
 ): Promise<ExecutionResult> {
   const PUBLIC_CE = "https://ce.judge0.com";
 
   const submitRes = await fetch(`${PUBLIC_CE}/submissions?base64_encoded=false&wait=false`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ source_code: sourceCode, language_id: languageId }),
+    body: JSON.stringify({ source_code: sourceCode, language_id: languageId, stdin: stdin ?? "" }),
   });
 
   if (!submitRes.ok) throw new Error(`Submission failed: ${submitRes.status}`);
@@ -153,7 +155,7 @@ async function submitWithPublicCE(
  * Automatically uses RapidAPI if NEXT_PUBLIC_RAPIDAPI_KEY is set,
  * otherwise falls back to the public CE endpoint.
  */
-export async function runCode(language: string, sourceCode: string): Promise<RunResult> {
+export async function runCode(language: string, sourceCode: string, stdin?: string): Promise<RunResult> {
   const langKey = language.toLowerCase();
   const languageId = LANGUAGE_MAP[langKey];
 
@@ -170,8 +172,8 @@ export async function runCode(language: string, sourceCode: string): Promise<Run
   }
 
   const result = USE_RAPIDAPI
-    ? await submitWithRapidAPI(sourceCode, languageId)
-    : await submitWithPublicCE(sourceCode, languageId);
+    ? await submitWithRapidAPI(sourceCode, languageId, stdin)
+    : await submitWithPublicCE(sourceCode, languageId, stdin);
 
   const output =
     result.stdout?.trimEnd() ??

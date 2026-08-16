@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { MonacoEditor } from "@/components/MonacoEditor";
 import { OutputPanel } from "@/components/OutputPanel";
+import { StdinPanel } from "@/components/StdinPanel";
 import { ChatPanel } from "@/components/ChatPanel";
 import { ShareWorkspaceModal } from "@/components/ShareWorkspaceModal";
 import { runCode, isLanguageSupported, type RunResult } from "@/lib/judge0";
@@ -102,6 +103,10 @@ export default function WorkspacePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+
+  // Stdin state
+  const [stdinValue, setStdinValue] = useState("");
+  const [stdinOpen, setStdinOpen] = useState(false);
 
   // File/Folder creation & rename state
   const [activeCreation, setActiveCreation] = useState<{
@@ -599,7 +604,7 @@ export default function WorkspacePage() {
     setRunResult(null);
 
     try {
-      const result = await runCode(activeFile.language, code);
+      const result = await runCode(activeFile.language, code, stdinValue || undefined);
       setRunResult(result);
     } catch (err) {
       setRunResult({
@@ -614,7 +619,7 @@ export default function WorkspacePage() {
     } finally {
       setIsRunning(false);
     }
-  }, [activeFile, isRunning]);
+  }, [activeFile, isRunning, stdinValue]);
 
   const handleSave = useCallback(async () => {
     if (!activeFile || isSaving) return;
@@ -945,6 +950,32 @@ export default function WorkspacePage() {
             {/* Actions */}
             {activeFile && (
               <div className="px-3 shrink-0 flex items-center gap-2">
+                {/* Input (stdin) toggle */}
+                <button
+                  id="stdin-toggle-button"
+                  onClick={() => setStdinOpen((o) => !o)}
+                  title="Toggle standard input panel"
+                  className={`
+                    flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold
+                    border transition-all duration-150 select-none
+                    ${
+                      stdinOpen
+                        ? "bg-amber-500/15 border-amber-600/50 text-amber-400"
+                        : stdinValue.trim().length > 0
+                        ? "bg-amber-500/10 border-amber-700/40 text-amber-500 hover:bg-amber-500/20"
+                        : "bg-secondary/80 border-border text-foreground/70 hover:bg-secondary hover:text-foreground"
+                    }
+                  `}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <polyline points="4 17 10 11 4 5" />
+                    <line x1="12" y1="19" x2="20" y2="19" />
+                  </svg>
+                  Input
+                  {stdinValue.trim().length > 0 && !stdinOpen && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                  )}
+                </button>
                 <button
                   id="save-code-button"
                   onClick={handleSave}
@@ -1030,7 +1061,7 @@ export default function WorkspacePage() {
             {/* Editor */}
             <div
               className="overflow-hidden bg-background"
-              style={{ flex: outputOpen ? "1 1 0%" : "1 1 100%" }}
+              style={{ flex: outputOpen || stdinOpen ? "1 1 0%" : "1 1 100%" }}
             >
               {activeFile ? (
                 <MonacoEditor
@@ -1051,6 +1082,15 @@ export default function WorkspacePage() {
                 </div>
               )}
             </div>
+
+            {/* Stdin Panel */}
+            {stdinOpen && (
+              <StdinPanel
+                value={stdinValue}
+                onChange={setStdinValue}
+                onClose={() => setStdinOpen(false)}
+              />
+            )}
 
             {/* Output Panel */}
             {outputOpen && (

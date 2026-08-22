@@ -1,0 +1,97 @@
+services:
+  # ── PostgreSQL Database ─────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: colabcode-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-colab_code}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-colab_code}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - colabcode-network
+
+  # ── Database Migration & Seed ───────────────────────────────
+  db-init:
+    build:
+      context: .
+      dockerfile: packages/db/Dockerfile
+    container_name: colabcode-db-init
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-colab_code}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - colabcode-network
+
+  # ── Realtime WebSocket Server ───────────────────────────────
+  realtime:
+    build:
+      context: .
+      dockerfile: apps/realtime/Dockerfile
+    container_name: colabcode-realtime
+    restart: unless-stopped
+    ports:
+      - "${REALTIME_PORT:-3001}:3001"
+    environment:
+      PORT: "3001"
+      REALTIME_PORT: "3001"
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-colab_code}?schema=public
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    networks:
+      - colabcode-network
+
+  # ── Next.js Web Frontend ────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: colabcode-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-colab_code}?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:-colab-code-super-secret-key-32-characters-minimum}
+      BETTER_AUTH_SECRET: ${AUTH_SECRET:-colab-code-super-secret-key-32-characters-minimum}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      NEXT_PUBLIC_REALTIME_URL: ${NEXT_PUBLIC_REALTIME_URL:-http://localhost:3001}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+      realtime:
+        condition: service_started
+    networks:
+      - colabcode-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  colabcode-network:
+    driver: bridge

@@ -66,6 +66,20 @@ A production-grade real-time collaborative code editor similar to VS Code + Goog
 └─────────────────────┘
 ```
 
+## 🐳 Docker Quickstart (Run with 1 Command)
+
+You can run the entire ColabCode stack (Frontend, Realtime WebSocket Server, PostgreSQL, and Auto-Migration/Seeding) with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+- **Frontend Web App**: [http://localhost:3000](http://localhost:3000)
+- **Realtime Server**: [http://localhost:3001](http://localhost:3001)
+- **Auto-seeded demo account**: `alice@example.com` / `password123`
+
+For advanced configuration, logs, and troubleshooting, see [DOCKER.md](file:///d:/colabcode/DOCKER.md).
+
 ### Technology Stack
 
 #### Frontend

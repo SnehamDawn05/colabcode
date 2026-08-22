@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: "standalone",
   reactStrictMode: true,
   eslint: {
     // Linting is handled separately; don't fail production builds on lint errors

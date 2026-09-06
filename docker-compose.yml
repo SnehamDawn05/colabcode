@@ -26,6 +26,7 @@ services:
     build:
       context: .
       dockerfile: packages/db/Dockerfile
+    image: dawn005/colab-code:db-init
     container_name: colabcode-db-init
     restart: "no"
     environment:
@@ -41,6 +42,7 @@ services:
     build:
       context: .
       dockerfile: apps/realtime/Dockerfile
+    image: dawn005/colab-code:realtime
     container_name: colabcode-realtime
     restart: unless-stopped
     ports:
@@ -64,6 +66,7 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+    image: dawn005/colab-code:web
     container_name: colabcode-web
     restart: unless-stopped
     ports:

@@ -9,25 +9,13 @@ RUN apk add --no-cache openssl libc6-compat
 
 WORKDIR /app
 
-# Copy root workspace configs
+# Copy workspace files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json ./
-
-# Copy package manifests
-COPY packages/db/package.json ./packages/db/
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/validation/package.json ./packages/validation/
-COPY packages/ui/package.json ./packages/ui/
-COPY apps/web/package.json ./apps/web/
-COPY apps/realtime/package.json ./apps/realtime/
+COPY packages ./packages
+COPY apps ./apps
 
 # Install workspace dependencies
 RUN pnpm install --frozen-lockfile
-
-# Copy source files
-COPY packages/db ./packages/db
-COPY packages/shared ./packages/shared
-COPY packages/validation ./packages/validation
-COPY apps/realtime ./apps/realtime
 
 # Generate Prisma client and build packages
 RUN pnpm --filter @colab-code/db generate

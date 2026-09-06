@@ -9,26 +9,13 @@ RUN apk add --no-cache libc6-compat openssl
 
 WORKDIR /app
 
-# Copy root workspace manifests
+# Copy workspace files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json ./
-
-# Copy all package manifests
-COPY packages/db/package.json ./packages/db/
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/validation/package.json ./packages/validation/
-COPY packages/ui/package.json ./packages/ui/
-COPY apps/web/package.json ./apps/web/
-COPY apps/realtime/package.json ./apps/realtime/
+COPY packages ./packages
+COPY apps ./apps
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
-
-# Copy source files
-COPY packages/db ./packages/db
-COPY packages/shared ./packages/shared
-COPY packages/validation ./packages/validation
-COPY packages/ui ./packages/ui
-COPY apps/web ./apps/web
 
 # Generate Prisma client and build packages
 RUN pnpm --filter @colab-code/db generate
@@ -68,6 +55,15 @@ COPY --from=builder /app/apps/web/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./.next/static
+
+# Copy Prisma schema and engine to runtime paths
+COPY --from=builder --chown=nextjs:nodejs /app/packages/db/prisma ./packages/db/prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.pnpm/@prisma+client* ./node_modules/.pnpm/
+RUN mkdir -p /tmp/prisma-engines ./apps/web/.prisma/client ./apps/web/.next/server && \
+    find /app/node_modules -name "*query_engine*.node" -exec cp {} /tmp/prisma-engines/ \; 2>/dev/null || true && \
+    find /app/node_modules -name "*query_engine*.node" -exec cp {} ./apps/web/.prisma/client/ \; 2>/dev/null || true && \
+    find /app/node_modules -name "*query_engine*.node" -exec cp {} ./apps/web/.next/server/ \; 2>/dev/null || true && \
+    chown -R nextjs:nodejs /tmp/prisma-engines ./apps/web/.prisma ./apps/web/.next
 
 USER nextjs
 

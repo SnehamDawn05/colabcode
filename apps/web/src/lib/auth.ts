@@ -13,7 +13,16 @@ export const auth = betterAuth({
     process.env.BETTER_AUTH_SECRET ||
     "colab-code-super-secret-key-32-characters-minimum-for-better-auth",
   baseURL:
-    process.env.NEXT_PUBLIC_API_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000",
+    process.env.BETTER_AUTH_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://localhost:3000",
+  trustedOrigins: [
+    process.env.BETTER_AUTH_URL,
+    process.env.NEXT_PUBLIC_API_URL,
+    "https://colab-code-web.onrender.com",
+    "https://colabcode-web.onrender.com",
+    "http://localhost:3000",
+  ].filter(Boolean) as string[],
   basePath: "/api/auth",
   emailAndPassword: {
     enabled: true,

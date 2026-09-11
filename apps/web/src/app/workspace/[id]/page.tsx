@@ -610,7 +610,7 @@ export default function WorkspacePage() {
       setRunResult({
         output: "",
         error: err instanceof Error ? err.message : "Unknown execution error",
-        statusDescription: "Internal Error",
+        statusDescription: "Execution Error",
         time: null,
         memory: null,
         languageId: null,

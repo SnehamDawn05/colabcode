@@ -84,30 +84,68 @@ function statusLabel(id: number): string {
   return labels[id] ?? "Unknown";
 }
 
+function encodeBase64(str: string): string {
+  if (typeof window === "undefined") {
+    return Buffer.from(str, "utf8").toString("base64");
+  }
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  return btoa(bin);
+}
+
+function decodeBase64(str: string | null | undefined): string | null {
+  if (!str) return null;
+  try {
+    if (typeof window === "undefined") {
+      return Buffer.from(str, "base64").toString("utf8");
+    }
+    const bin = atob(str);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return str;
+  }
+}
+
 async function submitWithRapidAPI(
   sourceCode: string,
   languageId: number,
   stdin?: string
 ): Promise<ExecutionResult> {
-  // Submit
-  const submitRes = await fetch(`${JUDGE0_BASE}/submissions?base64_encoded=false&wait=false`, {
+  const submitRes = await fetch(`${JUDGE0_BASE}/submissions?base64_encoded=true&wait=false`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "X-RapidAPI-Key": RAPIDAPI_KEY,
       "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
     },
-    body: JSON.stringify({ source_code: sourceCode, language_id: languageId, stdin: stdin ?? "" }),
+    body: JSON.stringify({
+      source_code: encodeBase64(sourceCode),
+      language_id: languageId,
+      stdin: encodeBase64(stdin ?? ""),
+    }),
   });
 
-  if (!submitRes.ok) throw new Error(`Submission failed: ${submitRes.status}`);
+  if (!submitRes.ok) {
+    const errorText = await submitRes.text().catch(() => "");
+    throw new Error(`Submission failed (${submitRes.status}): ${errorText || submitRes.statusText}`);
+  }
   const { token } = await submitRes.json();
+  if (!token) {
+    throw new Error("Execution service did not return a submission token");
+  }
 
   // Poll for result
   for (let i = 0; i < 15; i++) {
     await new Promise((r) => setTimeout(r, 1000));
     const pollRes = await fetch(
-      `${JUDGE0_BASE}/submissions/${token}?base64_encoded=false&fields=stdout,stderr,compile_output,message,status,time,memory`,
+      `${JUDGE0_BASE}/submissions/${token}?base64_encoded=true&fields=stdout,stderr,compile_output,message,status,time,memory`,
       {
         headers: {
           "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -115,11 +153,23 @@ async function submitWithRapidAPI(
         },
       }
     );
-    const result: ExecutionResult = await pollRes.json();
-    if (result.status.id > 2) return result; // not queued/processing
+    if (!pollRes.ok) continue;
+    const rawResult: ExecutionResult = await pollRes.json();
+    if (!rawResult?.status?.id) continue;
+    if (rawResult.status.id > 2) {
+      return {
+        stdout: decodeBase64(rawResult.stdout),
+        stderr: decodeBase64(rawResult.stderr),
+        compile_output: decodeBase64(rawResult.compile_output),
+        message: decodeBase64(rawResult.message),
+        status: rawResult.status,
+        time: rawResult.time,
+        memory: rawResult.memory,
+      };
+    }
   }
 
-  throw new Error("Execution timed out");
+  throw new Error("Execution timed out waiting for results");
 }
 
 async function submitWithPublicCE(
@@ -129,25 +179,47 @@ async function submitWithPublicCE(
 ): Promise<ExecutionResult> {
   const PUBLIC_CE = "https://ce.judge0.com";
 
-  const submitRes = await fetch(`${PUBLIC_CE}/submissions?base64_encoded=false&wait=false`, {
+  const submitRes = await fetch(`${PUBLIC_CE}/submissions?base64_encoded=true&wait=false`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ source_code: sourceCode, language_id: languageId, stdin: stdin ?? "" }),
+    body: JSON.stringify({
+      source_code: encodeBase64(sourceCode),
+      language_id: languageId,
+      stdin: encodeBase64(stdin ?? ""),
+    }),
   });
 
-  if (!submitRes.ok) throw new Error(`Submission failed: ${submitRes.status}`);
+  if (!submitRes.ok) {
+    const errorText = await submitRes.text().catch(() => "");
+    throw new Error(`Submission failed (${submitRes.status}): ${errorText || submitRes.statusText}`);
+  }
   const { token } = await submitRes.json();
+  if (!token) {
+    throw new Error("Execution service did not return a submission token");
+  }
 
   for (let i = 0; i < 15; i++) {
     await new Promise((r) => setTimeout(r, 1200));
     const pollRes = await fetch(
-      `${PUBLIC_CE}/submissions/${token}?base64_encoded=false&fields=stdout,stderr,compile_output,message,status,time,memory`
+      `${PUBLIC_CE}/submissions/${token}?base64_encoded=true&fields=stdout,stderr,compile_output,message,status,time,memory`
     );
-    const result: ExecutionResult = await pollRes.json();
-    if (result.status.id > 2) return result;
+    if (!pollRes.ok) continue;
+    const rawResult: ExecutionResult = await pollRes.json();
+    if (!rawResult?.status?.id) continue;
+    if (rawResult.status.id > 2) {
+      return {
+        stdout: decodeBase64(rawResult.stdout),
+        stderr: decodeBase64(rawResult.stderr),
+        compile_output: decodeBase64(rawResult.compile_output),
+        message: decodeBase64(rawResult.message),
+        status: rawResult.status,
+        time: rawResult.time,
+        memory: rawResult.memory,
+      };
+    }
   }
 
-  throw new Error("Execution timed out");
+  throw new Error("Execution timed out waiting for results");
 }
 
 /**
@@ -175,22 +247,41 @@ export async function runCode(language: string, sourceCode: string, stdin?: stri
     ? await submitWithRapidAPI(sourceCode, languageId, stdin)
     : await submitWithPublicCE(sourceCode, languageId, stdin);
 
-  const output =
-    result.stdout?.trimEnd() ??
-    result.compile_output?.trimEnd() ??
-    result.message?.trimEnd() ??
-    "";
+  // Guard against unexpected API responses where status is missing
+  if (!result?.status?.id) {
+    throw new Error("Received an invalid response from the execution service. Please try again.");
+  }
 
-  const error =
-    result.stderr?.trimEnd() ??
-    (result.status.id !== 3 && result.status.id !== 1 && result.status.id !== 2
-      ? result.compile_output?.trimEnd() ?? null
-      : null);
+  const statusId = result.status.id;
+
+  // stdout only — never put compile errors into the output panel
+  const output = result.stdout?.trimEnd() || "";
+
+  // Build a meaningful error string:
+  //   • Compilation Error (id 6)  → compile_output
+  //   • Runtime errors (id 7-12)  → stderr first, then compile_output/message
+  //   • Time Limit Exceeded (id 5) → stderr / message / TLE notice
+  //   • Accepted (id 3)           → no error
+  const rawCompile = result.compile_output?.trimEnd() || null;
+  const rawStderr  = result.stderr?.trimEnd()         || null;
+  const rawMessage = result.message?.trimEnd()         || null;
+
+  let error: string | null = null;
+  if (statusId === 6) {
+    // Compilation Error: compile_output has the exact file, line, column, and syntax error
+    error = rawCompile ?? rawStderr ?? rawMessage ?? "Compilation error occurred";
+  } else if (statusId === 5) {
+    error = rawStderr ?? rawMessage ?? "Time Limit Exceeded (program took too long to complete)";
+  } else if (statusId >= 7 && statusId <= 12) {
+    error = rawStderr ?? rawMessage ?? rawCompile ?? statusLabel(statusId);
+  } else if (statusId !== 3 && statusId !== 1 && statusId !== 2) {
+    error = rawStderr ?? rawCompile ?? rawMessage ?? statusLabel(statusId);
+  }
 
   return {
     output,
     error,
-    statusDescription: statusLabel(result.status.id),
+    statusDescription: statusLabel(statusId),
     time: result.time,
     memory: result.memory,
     languageId,

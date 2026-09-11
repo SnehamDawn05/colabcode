@@ -62,10 +62,10 @@ const LINE_REF_PATTERNS: Array<{
   { regex: /-->\s+\S+:(\d+):(\d+)/g, lineGroup: 1, colGroup: 2 },
   // TypeScript: file.ts(N,M): error
   { regex: /\w[\w./\\-]*\.\w+\((\d+),(\d+)\):/g, lineGroup: 1, colGroup: 2 },
-  // C/C++/Java/Go/Node/Ruby: file.ext:N:M: or file.ext:N:
-  { regex: /[\w./\\-]+\.\w+:(\d+)(?::(\d+))?:/g, lineGroup: 1, colGroup: 2 },
-  // Bash: script.sh: line N:
-  { regex: /:\s+line\s+(\d+):/g, lineGroup: 1 },
+  // C/C++/Java/Go/Node/Ruby: file.ext:N:M or file.ext:N
+  { regex: /([\w./\\-]+\.\w+):(\d+)(?::(\d+))?/g, lineGroup: 2, colGroup: 3 },
+  // Bash: script.sh: line N: or line N:
+  { regex: /(?::\s+|\b)line\s+(\d+):?/gi, lineGroup: 1 },
 ];
 
 /**
@@ -199,6 +199,8 @@ export function OutputPanel({
               className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
                 result.statusDescription === "Accepted"
                   ? "text-emerald-400 border-emerald-800 bg-emerald-950/50"
+                  : result.statusDescription === "Compilation Error"
+                  ? "text-amber-400 border-amber-800 bg-amber-950/50"
                   : result.statusDescription === "Unsupported"
                   ? "text-zinc-500 border-zinc-700 bg-zinc-900/50"
                   : "text-red-400 border-red-900 bg-red-950/50"

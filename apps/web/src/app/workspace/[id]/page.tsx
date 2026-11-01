@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { io, type Socket } from "socket.io-client";
 import { MonacoEditor } from "@/components/MonacoEditor";
 import { OutputPanel } from "@/components/OutputPanel";
 import { StdinPanel } from "@/components/StdinPanel";
@@ -125,6 +126,283 @@ export default function WorkspacePage() {
   const editorValueRef = useRef<string>("");
   const monacoEditorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
 
+  // Real-time synchronization state & refs
+  const [isConnected, setIsConnected] = useState(false);
+  const socketRef = useRef<Socket | null>(null);
+  const activeFileIdRef = useRef<string | null>(activeFileId);
+  const isApplyingRemoteUpdateRef = useRef<boolean>(false);
+  const broadcastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastBroadcastTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    activeFileIdRef.current = activeFileId;
+  }, [activeFileId]);
+
+  // Connect to realtime Socket.IO server for collaborative sync
+  useEffect(() => {
+    if (!workspaceId) return;
+
+    const realtimeUrl = process.env.NEXT_PUBLIC_REALTIME_URL || "http://localhost:3001";
+    const socket: Socket = io(realtimeUrl, {
+      withCredentials: true,
+      transports: ["websocket", "polling"],
+    });
+    socketRef.current = socket;
+
+    socket.on("connect", () => {
+      setIsConnected(true);
+      socket.emit("join_workspace", workspaceId);
+    });
+
+    socket.on("disconnect", () => {
+      setIsConnected(false);
+    });
+
+    // Handle remote file changes (live typing / content updates)
+    socket.on("file_change", (data: { fileId: string; content: string }) => {
+      const { fileId, content } = data;
+      if (!fileId) return;
+
+      setWorkspace((w) => {
+        if (!w) return w;
+        return {
+          ...w,
+          files: w.files.map((f) => (f.id === fileId ? { ...f, content } : f)),
+        };
+      });
+
+      setOpenTabs((tabs) =>
+        tabs.map((t) => (t.id === fileId ? { ...t, content } : t))
+      );
+
+      if (activeFileIdRef.current === fileId) {
+        editorValueRef.current = content;
+        const editor = monacoEditorRef.current;
+        if (editor) {
+          const model = editor.getModel();
+          if (model && model.getValue() !== content) {
+            isApplyingRemoteUpdateRef.current = true;
+            try {
+              const position = editor.getPosition();
+              const selections = editor.getSelections();
+
+              editor.executeEdits("remote", [
+                {
+                  range: model.getFullModelRange(),
+                  text: content,
+                  forceMoveMarkers: true,
+                },
+              ]);
+              editor.pushUndoStop();
+
+              if (position) editor.setPosition(position);
+              if (selections) editor.setSelections(selections);
+            } finally {
+              setTimeout(() => {
+                isApplyingRemoteUpdateRef.current = false;
+              }, 0);
+            }
+          }
+        }
+      }
+    });
+
+    // Handle remote file saves
+    socket.on("file_save", (data: { fileId: string; content: string }) => {
+      const { fileId, content } = data;
+      if (!fileId) return;
+
+      setWorkspace((w) => {
+        if (!w) return w;
+        return {
+          ...w,
+          files: w.files.map((f) => (f.id === fileId ? { ...f, content } : f)),
+        };
+      });
+
+      setOpenTabs((tabs) =>
+        tabs.map((t) => (t.id === fileId ? { ...t, content } : t))
+      );
+
+      if (activeFileIdRef.current === fileId) {
+        editorValueRef.current = content;
+        const editor = monacoEditorRef.current;
+        if (editor) {
+          const model = editor.getModel();
+          if (model && model.getValue() !== content) {
+            isApplyingRemoteUpdateRef.current = true;
+            try {
+              const position = editor.getPosition();
+              const selections = editor.getSelections();
+
+              editor.executeEdits("remote-save", [
+                {
+                  range: model.getFullModelRange(),
+                  text: content,
+                  forceMoveMarkers: true,
+                },
+              ]);
+              editor.pushUndoStop();
+
+              if (position) editor.setPosition(position);
+              if (selections) editor.setSelections(selections);
+            } finally {
+              setTimeout(() => {
+                isApplyingRemoteUpdateRef.current = false;
+              }, 0);
+            }
+          }
+        }
+      }
+    });
+
+    // Handle remote file creation
+    socket.on("file_create", (data: { file: File }) => {
+      if (!data.file) return;
+      setWorkspace((w) => {
+        if (!w) return w;
+        if (w.files.some((f) => f.id === data.file.id)) return w;
+        return { ...w, files: [...w.files, data.file] };
+      });
+    });
+
+    // Handle remote file rename
+    socket.on("file_rename", (data: { file: File }) => {
+      if (!data.file) return;
+      setWorkspace((w) => {
+        if (!w) return w;
+        return {
+          ...w,
+          files: w.files.map((f) => (f.id === data.file.id ? { ...f, ...data.file } : f)),
+        };
+      });
+      setOpenTabs((tabs) =>
+        tabs.map((t) => (t.id === data.file.id ? { ...t, ...data.file } : t))
+      );
+    });
+
+    // Handle remote file deletion
+    socket.on("file_delete", (data: { fileId: string }) => {
+      if (!data.fileId) return;
+      setWorkspace((w) => {
+        if (!w) return w;
+        return {
+          ...w,
+          files: w.files.filter((f) => f.id !== data.fileId),
+        };
+      });
+      setOpenTabs((tabs) => {
+        const nextTabs = tabs.filter((t) => t.id !== data.fileId);
+        if (activeFileIdRef.current === data.fileId) {
+          const next = nextTabs[0] ?? null;
+          setActiveFileId(next?.id ?? null);
+          editorValueRef.current = next?.content ?? "";
+        }
+        return nextTabs;
+      });
+    });
+
+    // Handle remote folder creation
+    socket.on("folder_create", (data: { folder: Folder }) => {
+      if (!data.folder) return;
+      setWorkspace((w) => {
+        if (!w) return w;
+        if (w.folders.some((f) => f.id === data.folder.id)) return w;
+        return { ...w, folders: [...w.folders, data.folder] };
+      });
+    });
+
+    // Handle remote folder rename
+    socket.on("folder_rename", (data: { folder: Folder }) => {
+      if (!data.folder) return;
+      setWorkspace((w) => {
+        if (!w) return w;
+        return {
+          ...w,
+          folders: w.folders.map((f) => (f.id === data.folder.id ? { ...f, ...data.folder } : f)),
+        };
+      });
+    });
+
+    // Handle remote folder deletion
+    socket.on("folder_delete", (data: { folderId: string; folderIdsToDelete?: string[]; fileIdsToDelete?: string[] }) => {
+      const fIds = new Set(data.folderIdsToDelete || [data.folderId]);
+      const fileIds = new Set(data.fileIdsToDelete || []);
+      setWorkspace((w) => {
+        if (!w) return w;
+        return {
+          ...w,
+          folders: w.folders.filter((f) => !fIds.has(f.id)),
+          files: w.files.filter((f) => !fileIds.has(f.id) && (!f.folderId || !fIds.has(f.folderId))),
+        };
+      });
+      setOpenTabs((tabs) => {
+        const nextTabs = tabs.filter((t) => !fileIds.has(t.id) && (!t.folderId || !fIds.has(t.folderId)));
+        if (activeFileIdRef.current && fileIds.has(activeFileIdRef.current)) {
+          const next = nextTabs[0] ?? null;
+          setActiveFileId(next?.id ?? null);
+          editorValueRef.current = next?.content ?? "";
+        }
+        return nextTabs;
+      });
+    });
+
+    return () => {
+      socket.emit("leave_workspace", workspaceId);
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [workspaceId]);
+
+  // Handle local editor keystrokes and broadcast changes in real-time
+  const handleEditorChange = (newVal: string) => {
+    editorValueRef.current = newVal;
+
+    if (isApplyingRemoteUpdateRef.current) {
+      return;
+    }
+
+    if (!activeFileId) return;
+    const fileId = activeFileId;
+
+    // Keep local tabs and workspace in sync with current text
+    setOpenTabs((tabs) =>
+      tabs.map((t) => (t.id === fileId ? { ...t, content: newVal } : t))
+    );
+    setWorkspace((w) => {
+      if (!w) return w;
+      return {
+        ...w,
+        files: w.files.map((f) => (f.id === fileId ? { ...f, content: newVal } : f)),
+      };
+    });
+
+    // Broadcast file_change with a short 60ms throttle
+    const now = Date.now();
+    const THROTTLE_MS = 60;
+
+    const doBroadcast = () => {
+      lastBroadcastTimeRef.current = Date.now();
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("file_change", {
+          workspaceId,
+          fileId,
+          content: newVal,
+        });
+      }
+    };
+
+    if (broadcastTimeoutRef.current) {
+      clearTimeout(broadcastTimeoutRef.current);
+    }
+
+    if (now - lastBroadcastTimeRef.current > THROTTLE_MS) {
+      doBroadcast();
+    } else {
+      broadcastTimeoutRef.current = setTimeout(doBroadcast, THROTTLE_MS);
+    }
+  };
+
   const fetchWorkspace = useCallback(async () => {
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}`, {
@@ -201,6 +479,13 @@ export default function WorkspacePage() {
       openFile(newFile);
       setActiveCreation(null);
       setCreationName("");
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("file_create", {
+          workspaceId,
+          file: newFile,
+        });
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to create file");
     }
@@ -224,6 +509,13 @@ export default function WorkspacePage() {
       setWorkspace((w) => (w ? { ...w, folders: [...w.folders, newFolder] } : w));
       setActiveCreation(null);
       setCreationName("");
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("folder_create", {
+          workspaceId,
+          folder: newFolder,
+        });
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to create folder");
     }
@@ -260,6 +552,13 @@ export default function WorkspacePage() {
       );
       setEditingItem(null);
       setEditingName("");
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("file_rename", {
+          workspaceId,
+          file: updatedFile,
+        });
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to rename file");
     }
@@ -293,6 +592,13 @@ export default function WorkspacePage() {
       );
       setEditingItem(null);
       setEditingName("");
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("folder_rename", {
+          workspaceId,
+          folder: updatedFolder,
+        });
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to rename folder");
     }
@@ -314,6 +620,13 @@ export default function WorkspacePage() {
         w ? { ...w, files: w.files.filter((f) => f.id !== fileId) } : w
       );
       closeTab(fileId);
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("file_delete", {
+          workspaceId,
+          fileId,
+        });
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to delete file");
     }
@@ -365,6 +678,15 @@ export default function WorkspacePage() {
             }
           : w
       );
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("folder_delete", {
+          workspaceId,
+          folderId,
+          folderIdsToDelete: Array.from(folderIdsToDelete),
+          fileIdsToDelete: filesToDelete.map((f) => f.id),
+        });
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to delete folder");
     }
@@ -648,6 +970,17 @@ export default function WorkspacePage() {
           files: w.files.map((f) => (f.id === activeFile.id ? { ...f, content } : f)),
         };
       });
+
+      if (broadcastTimeoutRef.current) {
+        clearTimeout(broadcastTimeoutRef.current);
+      }
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("file_save", {
+          workspaceId,
+          fileId: activeFile.id,
+          content,
+        });
+      }
     } catch (err) {
       console.error("Error saving file:", err);
       alert("Failed to save file");
@@ -731,8 +1064,15 @@ export default function WorkspacePage() {
             <span>Share</span>
           </button>
           <div className="h-4 w-px bg-border shrink-0" />
-          <div className="text-xs text-foreground/60 hidden sm:block">
-            Connected • {activeFile?.language || "No file"}
+          <div className="flex items-center gap-2 text-xs text-foreground/60 hidden sm:flex">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isConnected ? "bg-emerald-500 animate-pulse" : "bg-zinc-500"
+              }`}
+            />
+            <span>
+              {isConnected ? "Live" : "Offline"} • {activeFile?.language || "No file"}
+            </span>
           </div>
         </div>
       </div>
@@ -1065,13 +1405,12 @@ export default function WorkspacePage() {
             >
               {activeFile ? (
                 <MonacoEditor
+                  path={`file-${activeFile.id}`}
                   value={activeFile.content}
                   language={activeFile.language}
                   theme="vs-dark"
                   readOnly={false}
-                  onChange={(val) => {
-                    editorValueRef.current = val;
-                  }}
+                  onChange={handleEditorChange}
                   onEditorMount={(editor) => {
                     monacoEditorRef.current = editor;
                   }}

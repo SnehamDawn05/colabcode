@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "standalone",
+  ...(process.env.DOCKER_BUILD === "true" || process.platform !== "win32"
+    ? { output: "standalone" }
+    : {}),
   reactStrictMode: true,
   eslint: {
     // Linting is handled separately; don't fail production builds on lint errors

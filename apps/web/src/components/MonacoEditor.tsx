@@ -10,6 +10,7 @@ import type * as Monaco from "monaco-editor";
 loader.config({ monaco: undefined }); // use the default CDN loader
 
 interface MonacoEditorProps {
+  path?: string;
   value: string;
   onChange?: (value: string) => void;
   language: string;
@@ -19,6 +20,7 @@ interface MonacoEditorProps {
 }
 
 export function MonacoEditor({
+  path,
   value,
   onChange,
   language,
@@ -45,6 +47,7 @@ export function MonacoEditor({
     <Editor
       height="100%"
       width="100%"
+      path={path}
       language={language}
       value={value}
       theme={theme}
